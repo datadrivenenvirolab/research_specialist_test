@@ -1,5 +1,5 @@
 Please submit your assignment through GitHub using the following steps:
-1. Fork the assignment repository: [hYps://github.com/datadrivenenvirolab/research_specialist_test.git].
+1. Fork the assignment repository: [https://github.com/datadrivenenvirolab/research_specialist_test.git].
 2. Clone your fork to your local computer.
 3. Create a folder named `Firstname_Lastname_DDL_test` in the repository.
 4. Place all your code, datasets, presentation files, and README inside this folder.
