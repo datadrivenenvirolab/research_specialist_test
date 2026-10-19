@@ -1,0 +1,343 @@
+---
+title: "mungai_coding_sample"
+author: "Mary Mungai"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+rm(list = ls())
+gc()
+
+knitr::opts_chunk$set(echo = TRUE)
+setwd("/Users/22mungai/Downloads/ClimActor-master")
+```
+
+
+# Data Processing and Evaluation
+
+### Read in key datasets 
+```{r}
+countries <- read_csv("~/Downloads/ClimActor-master/Mary_Mungai_DDL_test/country_dict_Oct2023.csv")
+subnationals_context <- read_csv("~/Downloads/ClimActor-master/Mary_Mungai_DDL_test/subnational_contextuals_database_Dec2022.csv")
+key_dict <- read_csv("~/Downloads/ClimActor-master/Mary_Mungai_DDL_test/key_dict_03March2024.csv")
+```
+
+### Glimpse Data
+Goal: To get a sense of the number of variables, variable types, and variable content
+```{r cars}
+glimpse(countries)
+```
+
+
+```{r pressure, echo=FALSE}
+glimpse(subnationals_context)
+```
+
+```{r}
+glimpse(key_dict)
+```
+
+### Check for NAs
+Goal: One of the most important metrics for evaluating data quality is the completeness of a data set. It is also practical to measure missingness before merging multiple data sets to get a sense of explainable and un-explainable data gaps.
+```{r}
+library(DataExplorer)
+plot_missing(countries)
+```
+```{r}
+library(DataExplorer)
+plot_missing(subnationals_context)
+#ggsave("missing_data.png", width = 12, height = 8, dpi = 300) do not re-run
+```
+NOTE: Admin 1, Population Year, area, and state have a significant number of missing values. Admin 1 likely referring to the next highest administrative level.
+
+### Planning
+
+Slides Goal: Generate max 6 slides communicating the following:
+1. Most relevant data from the dataset (explain what features you chose to highlight)
+2. At least one spatial visualization (be creative)
+3. Data quality
+4. Data management
+5. Possible updates
+6. Most relevant aspects to be monitored for future functioning and maintenance
+
+Goal of ClimActor v2: 1) track climate commitments from sub-national actors, 2) help other researchers integrate external data with ClimActor data 3) expand to integrate other sub-national actors, some with complicated bureaucracies, into the data set without increasing redundancy or duplicating/over-estimating entities' commitments
+
+Assume subject unit is sub-national entity at the most unique level. 
+
+### Merge Data Sets into One
+
+Do a left-join merging the subnationals context and countries data set, then an inner-join matching the new joined data to the key dict data set.
+```{r}
+commitments <- left_join(subnationals_context, countries, by = join_by(country == right, region)) |> #if countries doesn't match to a subnational, then drop it because our target feature is subnationals
+  inner_join(key_dict, by = join_by(name == right)) |> #if there's not a match on both drop, because I need 0% NAs for name and climactor_id
+  mutate(country_population = Population,
+         new_iso = coalesce(iso, iso.x, iso.y),
+         new_entity_type = coalesce(entity_type.x, entity_type.y)) |>
+  subset(select = c(climactor_id, name, new_iso, population, country_population, new_entity_type, area, lat, lng, num_commit, state, country, region, initiatives_committed, admin_1, Last_mod))
+```
+
+I am specifically using a left join because I am more interested in the completeness of the sub-national context data. If any value in the countries data set doesn't match to a sub-national entity, then I want to replace it with a NULL value because my target feature is the name of the sub-national entity. I am using an inner join to match the name of the sub-national entity to the name (listed as right) of the sub-nationals in the key dicitionary, because I assume a) there is one climactor_id for each name and b) that all sub-nationals in the subnationals_context data set are represented in key_dict. Therefore, an inner join is most appropriate because it would drop any row which doesn't have a corresponding name in either the key dictionary (and theoretically, a corresponding id) or the subnationals_context data set.
+
+Viewing Data Flagged for Duplication
+```{r}
+commitments[c(1,2,26,358), ]
+```
+NOTE: !Kheis matches to multiple rows in y (countries) because it's a duplicate.
+
+Confirm variables matched correctly
+```{r}
+head(commitments)
+```
+
+Plot Missing Values
+```{r}
+plot_missing(commitments)
+```
+NOTE: Using a left and inner join reduced missing percentages from in the 50-60% range, which happened when I tried using a full-join, to around 15%, with the exception of one outlier at around 37%. 
+
+### Checking for duplicates
+```{r}
+sum(duplicated(commitments$climactor_id)) #also cut duplicates by a lot
+```
+
+### Delete duplicates
+```{r}
+commitments <- commitments |>
+  arrange(Last_mod)
+```
+
+```{r}
+commitments <- commitments[!duplicated(commitments, fromLast = TRUE), ] #favor most recent insertions
+```
+
+I am doing these two steps to ensure that the most recent insertions are favored during de-duplication.
+
+Double Check Success of De-duplication
+```{r}
+anyDuplicated(commitments)
+```
+
+```{r}
+plot_missing(commitments)
+```
+The new merged data set has 13,772 observations, which means there are 934 unaccounted for from the subnationals context data set. This image should be included in Slide 1.
+
+### Export Data as a CSV file
+```{r}
+#write_csv(commitments, "commitments.csv") AVOID rerunning this
+```
+
+
+# Data Analysis
+
+### Numeric Data Quality Report
+```{r}
+commitments_numeric <- commitments |>
+  dplyr::select(population, country_population, num_commit)
+```
+Use dplyr::select() to select our key numeric variables (for example, NOT latitude or longitude beacuse a 5-number summary does not capture spatial variation best).
+
+```{r}
+library(skimr)
+
+skim_commitments <- skim_without_charts(commitments_numeric)
+names(skim_commitments)
+```
+Use skim_without_charts() to run basic descriptive statistics, then names to extract the variable names.
+
+```{r}
+focus_commitments <- focus(skim_commitments, skim_variable, numeric.p0, numeric.p25, numeric.mean, numeric.p50, numeric.p75, numeric.p100, numeric.sd)[, -1]
+extra <- funModeling::status(commitments_numeric)[, c("p_na")] 
+rownames(extra) <- NULL
+```
+Use focus() to essentially select the columns I need, named by the output of "names(skim_commitments)". Drop the last column because it is empty. Then get one extra metric (percent_na or "p_na") using funModeling::status, and delete the row name.
+
+```{r}
+final_commitments <- cbind(focus_commitments, extra)
+```
+
+
+```{r}
+names(final_commitments) <- c("Feature", "Min", "1st Qrt.", "Mean", "Median", "3rd Qrt.", "Max", "Standard Deviation", "Missing %")
+```
+
+
+```{r}
+library(gt)
+
+num_report <- gt(final_commitments) |>
+  tab_header(title = "Numeric Quality Report",
+             subtitle = "From: ClimActor v2 Data")
+num_report
+#gtsave(num_report, filename = "numeric_quality_report.png") do not re-run
+```
+
+Finally, bind the selected variables and extra variable, rename them, and pass them through the gt() function to make a more HTML friendly output, complete with a title and subtitle. This image will be included in Slide 2. There are some large standard deviation values for population and country population, and all values seem to be heavily left-skewed.
+
+### Categorical Data Quality Report 
+
+Start by factoring relevant data. This involves choosing character variables with relatively low cardinality.
+```{r}
+commitments <- commitments |>
+  mutate(
+    new_iso_fct = as.factor (new_iso),
+    region_fct = as.factor(region),
+    country_fct = as.factor(country)
+  )
+```
+These variables were chosen because while country and iso have high cardinality on their own (n >100), relative to the data set they are small. Thousands of variables could feasibly fit in each "category" of country.
+
+```{r}
+commitments_cat <- commitments |>
+  dplyr::select(new_iso_fct, region_fct, country_fct)
+```
+Select categorical variables
+
+```{r}
+skim_cat_commits <- skim_without_charts(commitments_cat)
+names(skim_cat_commits)
+```
+I can use skim_without_charts() again because skim_without_charts() handles summary statistics well for both numeric and categorical data, just not at the same time.
+
+```{r}
+focus_cat_commitments <- as.data.frame(focus(skim_cat_commits, skim_variable, complete_rate, factor.n_unique, factor.top_counts))[, -1]
+focus_cat_commitments
+```
+Use focus() again to select key variables.
+
+```{r}
+focus_cat_commitments$count <- focus_cat_commitments$complete_rate * 13772
+focus_cat_commitments <- focus_cat_commitments |>
+  relocate(count, .before = 2) |>
+  mutate(
+    percent_Miss = 1 - complete_rate
+    )
+```
+There are other ways to get the count for each variable, but I thought it made the most sense just to multiply the complete rate, since I have it, by our sample size, which is 13,772. Relocate helps me move this variable before the indexed second column, and calculate the missing percentage rate.
+
+```{r}
+names(focus_cat_commitments) <- c("Feature", "Count", "Complete Rate", "Cardinality", "Top Counts (Factor)", "Missing %")
+
+cat_report <- gt(focus_cat_commitments) |>
+  tab_header(title = "Categorical Quality Report",
+             subtitle = "From: ClimActor v2 Data")
+cat_report
+#gtsave(cat_report, filename = "categorical_quality_report2.png") #do not re-run
+```
+This will be on Slide 3. This report is even more useful than the numeric quality report because it shows us two things. First, for ease of evaluation, it is not necessary to have both iso and country name. It would be better to choose one. Second, there is a large disparity of commitments: sub-national actors in Italy have almost twice the number of commitments as sub-national actors Spain, which have almost four times as much as those in the United States and Belgium. 
+
+### Analyzing Number of Sub-national Actors with at Least One Climate Commitment per World Region (Slide 4)
+```{r}
+commitments |>
+  ggplot(aes(x= region, y = after_stat(prop), group = 1)) + geom_bar(color = "black", fill = "lightslateblue") + labs(
+    title = "Proportion of sub-national actors with at least one climate commitment per region",
+    x = "Region",
+    y = "Proportion"
+  ) + theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+#ggsave("visualization_1.png", width = 12, height = 8, dpi = 300) do not re-run
+```
+This bar plot confirms the trend I suspected from the categorical data quality report: there are more sub-national actors from Europe than anywhere else.
+
+### Analyzing Number of Commitments from Sub-national countries per Region (Slide 5)
+```{r}
+country_commits <- commitments |>
+  mutate(total_commitments = sum(num_commit, na.rm = T), .by = country_fct)
+```
+
+
+```{r}
+country_commits |>
+  ggplot(aes(x= country_population, y = total_commitments, color = region)) + geom_point() + labs(
+    title = "Proportion of Sub-national Actor Commitments per World Region",
+    x = "National Populations",
+    y = "Total Climate Commitments",
+    fill = "Region"
+  ) + theme_minimal() 
+```
+
+```{r}
+country_deciles <- commitments |> 
+  mutate(
+    country_decile = ntile(country_population, 10)
+  ) |> 
+  group_by(region, country_decile) |> 
+  summarise(
+    mean_number_of_commits = mean(num_commit, na.rm = TRUE),
+    median_number_of_commits = median(num_commit, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  arrange(country_decile)
+```
+
+There seems to be outliers in terms of climate commitments and national populations. Let's stratify the countries into groups based on their population size and see if that better shows a relationship between sub-national actors in bigger countries and the number of climate commitments they can make.
+
+```{r}
+plot_2 <- ggplot(country_deciles, aes(x = country_decile, y = median_number_of_commits, color = region)) +
+  geom_line() + 
+  facet_wrap(~ region) +
+  geom_point(size = 2) +
+  labs(
+    title = "Median Number of Climate Commitments by Sub-national Actors by National Population Size, Stratified by Region",
+    x = "National Population Category",
+    y = "Number of Climate Commitments",
+    color = "Region"
+  ) +
+  theme_minimal() 
+
+#ggsave("visualization_facets.png", plot = plot_2, width = 12, height = 8, dpi = 300) do not rerun
+```
+This graph gives us some more information. It seems that sub-national actors in higher population nations in North America have lower median climate commitments compared to sub-national actors in lower population nations on the continent. Other regions have median climate commitment spikes at mid-population percentiles both positively (Latin America and Eastern Europe/Central Asia) and negatively (South Asia and Sub-Saharan Africa).
+
+### Visualizing spatial distribution of higher commitment sub-national actors within a nation-state.
+Due to having the highest number of climate-committed sub-national actors, let's pick on Italy.
+
+```{r}
+library(sf)
+
+commitments_space_clean <- commitments |>
+  drop_na(c(lat, lng))
+```
+
+Spatial analysis cannot work if there are NAs in geographic coordinates, so ensure those are taken care of.
+
+```{r}
+sum(is.na(commitments_space_clean$lat))
+```
+
+```{r}
+sum(is.na(commitments_space_clean$lng))
+```
+
+```{r}
+spatial_commits <- st_as_sf(commitments_space_clean, coords = c("lng", "lat"), crs = 7794)
+```
+
+EPSG:7794 is the primary projected coordinate system for Italy.
+
+```{r}
+world <- ggplot2::map_data("world")
+italy <- world[world$region == "Italy", ]
+```
+Use the function map_data() to load a data frame of longitudes and latitues for the country of italy
+
+```{r}
+map <- ggplot() +
+  # Layer 1: Draw background country boundaries
+  geom_polygon(data = italy, aes(x = long, y = lat, group = group), 
+               fill = "white", color = "black") +
+  # Layer 2: Plot your latitude/longitude spatial points
+  geom_sf(data = spatial_commits, aes(shape = new_entity_type, color = num_commit)) +
+  scale_color_viridis_c(name = "Number of Climate Commitments") +
+  # Layer 3: Crop map view window to focus near your data points
+  coord_sf(xlim = c(6.6, 19), ylim = c(36, 49), expand = FALSE) +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Spatial visualization of sub-national actors in Italy",
+       x = "Longitude", y = "Latitude", shape = "Entity")
+map
+#ggsave("visualization_spatial.png", plot = map, width = 12, height = 8, dpi = 300) do not re-run
+```
+The map of Italy is cleared very dense, especially on the north east coast and central west region. It seems that there are many sub-national actors which have committed to 4 or fewer different climate commitments, and another handful that have committed 8 or fewer climate commitments.
