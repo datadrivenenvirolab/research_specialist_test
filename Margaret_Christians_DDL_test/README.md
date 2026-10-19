@@ -42,7 +42,7 @@ Matching Errors: Just looking through each DataFrame row by row, I observed many
 
 ### Assignment B
 
-Data Sourcing: The Assignment B notebook downloads the ClimActor 2.0 dataset ZIP from [UNC Dataverse](https://dataverse.unc.edu/dataset.xhtml?persistentId=doi:10.15139/S3/GGWVVQ), extracts it to `data/climactor_doi_download/`, and loads the Parquet and CSV files.
+Data Sourcing: The Assignment B notebook downloads the ClimActor 2.0 dataset ZIP from [UNC Dataverse](https://dataverse.unc.edu/dataset.xhtml?persistentId=doi:10.15139/S3/GGWVVQ), extracts it, and loads the files.
 
 Merging and Spatial Visualization: Generated geographic coordinates using the key dictionary's `long_lat` column, then merged chosen CSVs using ClimActor ID to create geospatial visualizations of the most important features.
 
